@@ -1,14 +1,11 @@
-local isPaused, isDead, pickups = false, false, {}
+local isLoadoutLoaded, isPaused, isDead, isFirstSpawn, pickups = false, false, false, true, {}
 
-Citizen.CreateThread(function()
+CreateThread(function()
 	while true do
-		Citizen.Wait(0)
+		Wait(0)
 
 		if NetworkIsPlayerActive(PlayerId()) then
-			if (Config.EnableDebug) then
-				RDX.StartTimer = GetGameTimer()
-			end
-
+			TriggerEvent('rdx:onPlayerJoined')
 			TriggerServerEvent('rdx:onPlayerJoined')
 			break
 		end
@@ -17,90 +14,74 @@ end)
 
 RegisterNetEvent('rdx:playerLoaded')
 AddEventHandler('rdx:playerLoaded', function(playerData)
-	if (Config.EnableDebug) then
-		TriggerServerEvent('rdx:clientLog', ('after %sms `rdx:playerLoaded` was called from the server after `rdx:onPlayerJoined` event has been triggerd for player id %s'):format((GetGameTimer() - RDX.StartTimer), playerData.playerId))
-	end
-
-	RDX.PlayerLoaded = true
 	RDX.PlayerData = playerData
 
-	-- check if player is coming from loading screen
-	if GetEntityModel(PlayerPedId()) == 0x0D7114C9 or GetEntityModel(PlayerPedId()) == 0x00B69710 then
-		local defaultModel = 0xF5C1611E -- mp_male
+	local playerPed = PlayerPedId()
 
-		if (IsModelInCdimage(defaultModel)) then
-			RequestModel(defaultModel)
-
-			while not HasModelLoaded(defaultModel) do
-				Citizen.Wait(0)
-			end
-
-			SetPlayerModel(PlayerId(), defaultModel, 0)
-			SetPedOutfitPreset(PlayerPedId(), 0, 0)
-			SetModelAsNoLongerNeeded(defaultModel)
-		end
+	if Config.EnablePvP then
+		Citizen.InvokeNative(0xF808475FA571D823, true) --enable friendly fire
+		NetworkSetFriendlyFireOption(true)
+		SetRelationshipBetweenGroups(5, `PLAYER`, `PLAYER`)
 	end
 
-	-- enable PVP
-	NetworkSetFriendlyFireOption(true)
+	if Config.RevealMap then
+		Citizen.InvokeNative(0x4B8F743A4A6D2FF8, true)
+	end
 
-	-- disable wanted level
-	ClearPlayerWantedLevel(PlayerId())
-	SetMaxWantedLevel(0)
-
-	RDX.Game.Teleport(PlayerPedId(), {
-		x = playerData.coords.x,
-		y = playerData.coords.y,
-		z = playerData.coords.z + 0.25,
-		heading = playerData.coords.heading
-	}, function()
-		ShutdownLoadingScreen()
-		DoScreenFadeIn(1000)
-		FreezeEntityPosition(PlayerPedId(), false)
-		StartServerSyncLoops()
-
-		TriggerServerEvent('rdx:onPlayerSpawn')
-		TriggerEvent('rdx:onPlayerSpawn')
-		TriggerEvent('playerSpawned') -- compatibility with old scripts, will be removed soon
-		TriggerEvent('rdx:restoreLoadout')
-
-		if Config.EnableHud then
-			for i = 1, #playerData.accounts do
-				local account = playerData.accounts[i]
-				local accountTpl = '<div><img class="money" src="img/accounts/' .. account.name .. '.png"/>&nbsp;{{money}}</div>'
-
-				RDX.UI.HUD.RegisterElement('account_' .. account.name, i, 0, accountTpl, {money = RDX.Math.GroupDigits(account.money)})
-			end
-
-			local jobTpl = '<div>{{job_label}} - {{grade_label}}</div>'
-
-			if playerData.job.grade_label == '' or playerData.job.grade_label == playerData.job.label then
-				jobTpl = '<div>{{job_label}}</div>'
-			end
-
-			RDX.UI.HUD.RegisterElement('job', #playerData.accounts, 0, jobTpl, {
-				job_label = playerData.job.label,
-				grade_label = playerData.job.grade_label
-			})
+	if Config.EnableHud then
+		for k,v in ipairs(playerData.accounts) do
+			local accountTpl = '<div><img class="money" src="img/accounts/' .. v.name .. '.png"/>&nbsp;{{money}}</div>'
+			RDX.UI.HUD.RegisterElement('account_' .. v.name, k, 0, accountTpl, {money = RDX.Math.GroupDigits(v.money)})
 		end
 
-		if (Config.EnableDebug) then
-			TriggerServerEvent('rdx:clientLog', ('rdx:onPlayerJoined took %sms for loading player id %s'):format((GetGameTimer() - RDX.StartTimer), playerData.playerId))
+		local jobTpl = '<div>{{job_label}} - {{grade_label}}</div>'
+
+		if playerData.job.grade_label == '' or playerData.job.grade_label == playerData.job.label then
+			jobTpl = '<div>{{job_label}}</div>'
+		end
+
+		RDX.UI.HUD.RegisterElement('job', #playerData.accounts, 0, jobTpl, {
+			job_label = playerData.job.label,
+			grade_label = playerData.job.grade_label
+		})
+	end
+
+	-- Using spawnmanager now to spawn the player, this is the right way to do it, and it transitions better.
+	exports.spawnmanager:spawnPlayer({
+		x = playerData.coords.x,
+		y = playerData.coords.y,
+		z = playerData.coords.z,
+		heading = playerData.coords.heading,
+		model = Config.DefaultPlayerModel,
+		skipFade = false
+	}, function()
+		isLoadoutLoaded = true
+		TriggerServerEvent('rdx:onPlayerSpawn')
+		TriggerEvent('rdx:onPlayerSpawn')
+		TriggerEvent('rdx:restoreLoadout')
+		RDX.PlayerLoaded = true
+
+		if Config.DisplayCoords then
+			DisplayCoords()
 		end
 	end)
 end)
 
-RegisterNetEvent('rdx:setMaxWeight')
-AddEventHandler('rdx:setMaxWeight', function(newMaxWeight)
-	RDX.PlayerData.maxWeight = newMaxWeight
+RegisterNetEvent('es:activateMoney')
+AddEventHandler('es:activateMoney', function(money)
+	RDX.PlayerData.money = money
 end)
+
+RegisterNetEvent('rdx:setMaxWeight')
+AddEventHandler('rdx:setMaxWeight', function(newMaxWeight) RDX.PlayerData.maxWeight = newMaxWeight end)
 
 AddEventHandler('rdx:onPlayerSpawn', function() isDead = false end)
 AddEventHandler('rdx:onPlayerDeath', function() isDead = true end)
+--AddEventHandler('skinchanger:loadDefaultModel', function() isLoadoutLoaded = false end)
 
 AddEventHandler('skinchanger:modelLoaded', function()
 	while not RDX.PlayerLoaded do
-		Citizen.Wait(100)
+		Wait(100)
 	end
 
 	TriggerEvent('rdx:restoreLoadout')
@@ -109,42 +90,37 @@ end)
 AddEventHandler('rdx:restoreLoadout', function()
 	local playerPed = PlayerPedId()
 	local ammoTypes = {}
-	local retval, currentWeaponHash = GetCurrentPedWeapon(playerPed, true)
 
 	RemoveAllPedWeapons(playerPed, true, true)
 
-	for i = 1, #RDX.PlayerData.loadout do
-		local loadout = RDX.PlayerData.loadout[i]
-		local weaponName = loadout.name
+	for k,v in ipairs(RDX.PlayerData.loadout) do
+		local weaponName = v.name
 		local weaponHash = GetHashKey(weaponName)
 
-		GiveWeaponToPed_2(playerPed, weaponHash, 0, true, false, 0, false, 0.5, 1.0, 0, false, 0, false);
+		GiveWeaponToPed_2(playerPed, weaponHash, 0, false, false, 0, false, 0.5, 1.0, 0, false, 0, false)
 
 		local ammoType = GetPedAmmoTypeFromWeapon(playerPed, weaponHash)
 
-		for i2 = 1, #loadout.components do
-			local component = loadout.components[i2]
-			local componentHash = RDX.GetWeaponComponent(weaponName, component).hash
+		for k2,v2 in ipairs(v.components) do
+			local componentHash = RDX.GetWeaponComponent(weaponName, v2).hash
 
-			GiveWeaponComponentToEntity(playerPed, componentHash, weaponHash, true)
+			GiveWeaponComponentToPed(playerPed, componentHash, weaponHash, true)
 		end
 
 		if not ammoTypes[ammoType] then
-			SetPedAmmo(playerPed, weaponHash, loadout.ammo)
+			SetPedAmmo(playerPed, weaponHash, v.ammo)
 			ammoTypes[ammoType] = true
 		end
 	end
 
-	SetCurrentPedWeapon(playerPed, currentWeaponHash, true)
+	isLoadoutLoaded = true
 end)
 
 RegisterNetEvent('rdx:setAccountMoney')
 AddEventHandler('rdx:setAccountMoney', function(account)
-	for i = 1, #RDX.PlayerData.accounts do
-		local _account = RDX.PlayerData.accounts[i]
-
-		if _account.name == account.name then
-			RDX.PlayerData.accounts[i] = account
+	for k,v in ipairs(RDX.PlayerData.accounts) do
+		if v.name == account.name then
+			RDX.PlayerData.accounts[k] = account
 			break
 		end
 	end
@@ -157,34 +133,55 @@ AddEventHandler('rdx:setAccountMoney', function(account)
 end)
 
 RegisterNetEvent('rdx:addInventoryItem')
-AddEventHandler('rdx:addInventoryItem', function(item, count, showNotification)
-	for i = 1, #RDX.PlayerData.inventory do
-		local _item = RDX.PlayerData.inventory[i]
+AddEventHandler('rdx:addInventoryItem', function(item, count, showNotification, newItem)
+	local found = false
 
-		if _item.name == item then
-			RDX.UI.ShowInventoryItemNotification(true, _item.label, count - _item.count)
-			RDX.PlayerData.inventory[i].count = count
+	for k,v in ipairs(RDX.PlayerData.inventory) do
+		if v.name == item then
+			RDX.UI.ShowInventoryItemNotification(true, v.label, count - v.count)
+			RDX.PlayerData.inventory[k].count = count
+
+			found = true
 			break
 		end
+	end
+
+	-- If the item wasn't found in your inventory -> run
+	if(found == false and newItem --[[Just a check if there is a newItem]])then
+		-- Add item newItem to the players inventory
+		RDX.PlayerData.inventory[#RDX.PlayerData.inventory + 1] = {
+			name = newItem.name,
+			count = count,
+			label = newItem.label,
+			weight = newItem.weight,
+			limit = newItem.limit,
+			usable = newItem.usable,
+			rare = newItem.rare,
+			canRemove = newItem.canRemove
+		}
+
+		-- Show a notification that a new item was added
+		RDX.UI.ShowInventoryItemNotification(true, newItem.label, count)
+	else
+		-- Don't show this error for now
+		-- print("^1[ExtendedMode]^7 Error: there is an error while trying to add an item to the inventory, item name: " .. item)
 	end
 
 	if showNotification then
 		RDX.UI.ShowInventoryItemNotification(true, item, count)
 	end
 
-	if RDX.UI.Menu.IsOpen('default', 'redm_extended', 'inventory') then
+	if RDX.UI.Menu.IsOpen('default', 'rdx_extended', 'inventory') then
 		RDX.ShowInventory()
 	end
 end)
 
 RegisterNetEvent('rdx:removeInventoryItem')
 AddEventHandler('rdx:removeInventoryItem', function(item, count, showNotification)
-	for i = 1, #RDX.PlayerData.inventory do
-		local _item = RDX.PlayerData.inventory[i]
-
-		if _item.name == item then
-			RDX.UI.ShowInventoryItemNotification(false, _item.label, _item.count - count)
-			RDX.PlayerData.inventory[i].count = count
+	for k,v in ipairs(RDX.PlayerData.inventory) do
+		if v.name == item then
+			RDX.UI.ShowInventoryItemNotification(false, v.label, v.count - count)
+			RDX.PlayerData.inventory[k].count = count
 			break
 		end
 	end
@@ -193,7 +190,7 @@ AddEventHandler('rdx:removeInventoryItem', function(item, count, showNotificatio
 		RDX.UI.ShowInventoryItemNotification(false, item, count)
 	end
 
-	if RDX.UI.Menu.IsOpen('default', 'redm_extended', 'inventory') then
+	if RDX.UI.Menu.IsOpen('default', 'rdx_extended', 'inventory') then
 		RDX.ShowInventory()
 	end
 end)
@@ -205,95 +202,75 @@ end)
 
 RegisterNetEvent('rdx:addWeapon')
 AddEventHandler('rdx:addWeapon', function(weaponName, ammo)
-	local playerPed = PlayerPedId()
-	local weaponHash = GetHashKey(weaponName)
-	local retval, currentWeaponHash = GetCurrentPedWeapon(playerPed, true)
-
-	GiveWeaponToPed_2(playerPed, weaponHash, ammo, true, false, 0, false, 0.5, 1.0, 0, false, 0, false);
-
-	SetCurrentPedWeapon(playerPed, currentWeaponHash, true)
+	GiveWeaponToPed_2(PlayerPedId(), GetHashKey(weaponName), ammo, false, false, 0, false, 0.5, 1.0, 0, false, 0, false)
 end)
 
 RegisterNetEvent('rdx:addWeaponComponent')
 AddEventHandler('rdx:addWeaponComponent', function(weaponName, weaponComponent)
-	local playerPed = PlayerPedId()
-	local weaponHash = GetHashKey(weaponName)
 	local componentHash = RDX.GetWeaponComponent(weaponName, weaponComponent).hash
-
-	GiveWeaponComponentToEntity(playerPed, componentHash, weaponHash, true)
+	GiveWeaponComponentToEntity(PlayerPedId(), componentHash, GetHashKey(weaponName), true)
 end)
 
 RegisterNetEvent('rdx:setWeaponAmmo')
 AddEventHandler('rdx:setWeaponAmmo', function(weaponName, weaponAmmo)
-	local playerPed = PlayerPedId()
-	local weaponHash = GetHashKey(weaponName)
+	SetPedAmmo(PlayerPedId(), GetHashKey(weaponName), weaponAmmo)
+end)
 
-	SetPedAmmo(playerPed, weaponHash, weaponAmmo)
+-- 0.0: GOOD CONDITION 1.0: POOR CONDITION
+RegisterNetEvent('rdx:setWeaponCondition')
+AddEventHandler('rdx:setWeaponCondition', function(weaponName, level)
+	SetWeaponCondition(GetHashKey(weaponName), level)
+end)
+
+RegisterNetEvent('rdx:setWeaponDirtLevel')
+AddEventHandler('rdx:setWeaponDirtLevel', function(weaponName, level)
+	SetWeaponDirtLevel(GetHashKey(weaponName), level, true) -- FIX: not sure what the last boolean is
+end)
+
+RegisterNetEvent('rdx:setWeaponMudLevel')
+AddEventHandler('rdx:setWeaponMudLevel', function(weaponName, level)
+	SetWeaponMudLevel(GetHashKey(weaponName), level, true) -- FIX: not sure what the last boolean is
+end)
+
+RegisterNetEvent('rdx:setWeaponRustLevel')
+AddEventHandler('rdx:setWeaponRustLevel', function(weaponName, level)
+	SetWeaponRustLevel(GetHashKey(weaponName), level, true) -- FIX: not sure what the last boolean is
 end)
 
 RegisterNetEvent('rdx:removeWeapon')
 AddEventHandler('rdx:removeWeapon', function(weaponName)
 	local playerPed = PlayerPedId()
 	local weaponHash = GetHashKey(weaponName)
-	local ammoType = Citizen.InvokeNative(0x5C2EA6C44F515F34, weaponHash)
 
-	RemoveWeaponFromPed(playerPed, weaponHash, true, ammoType)
+	RemoveWeaponFromPed(playerPed, weaponHash, true, Citizen.InvokeNative(0x5C2EA6C44F515F34, weaponHash))
 	SetPedAmmo(playerPed, weaponHash, 0) -- remove leftover ammo
-	Citizen.InvokeNative(0xDCD2A934D65CB497, playerPed, weaponHash, 0) -- remove leftover ammo in clip
+	SetAmmoInClip(playerPed, weaponHash, 0)
 end)
 
 RegisterNetEvent('rdx:removeWeaponComponent')
 AddEventHandler('rdx:removeWeaponComponent', function(weaponName, weaponComponent)
-	local playerPed = PlayerPedId()
-	local weaponHash = GetHashKey(weaponName)
 	local componentHash = RDX.GetWeaponComponent(weaponName, weaponComponent).hash
-
-	RemoveWeaponComponentFromPed(playerPed, componentHash, weaponHash)
+	RemoveWeaponComponentFromPed(PlayerPedId(), componentHash, GetHashKey(weaponName))
 end)
 
 RegisterNetEvent('rdx:teleport')
 AddEventHandler('rdx:teleport', function(coords)
-	local playerPed = PlayerPedId()
-
-	-- ensure decmial number
-	coords.x = coords.x + 0.0
-	coords.y = coords.y + 0.0
-	coords.z = coords.z + 0.0
-
-	RDX.Game.Teleport(playerPed, coords)
+	RDX.Game.Teleport(PlayerPedId(), coords)
 end)
 
 RegisterNetEvent('rdx:teleportWaypoint')
-AddEventHandler('rdx:teleportWaypoint', function()
-	local playerPed = PlayerPedId()
+AddEventHandler('rdx:teleportWaypoint', function(coords)
 	local x, y = table.unpack(GetWaypointCoords())
-
-	RDX.Game.Teleport(playerPed, { x = x, y = y, z = -199.99 })
+	RDX.Game.Teleport(PlayerPedId(), { x = x, y = y, z = -199.99 })
 end)
 
 RegisterNetEvent('rdx:setJob')
 AddEventHandler('rdx:setJob', function(job)
 	if Config.EnableHud then
 		RDX.UI.HUD.UpdateElement('job', {
-			job_label = job.label,
+			job_label   = job.label,
 			grade_label = job.grade_label
 		})
-	end
-end)
-
-RegisterNetEvent('rdx:spawnVehicle')
-AddEventHandler('rdx:spawnVehicle', function(vehicleName)
-	local model = (type(vehicleName) == 'number' and vehicleName or GetHashKey(vehicleName))
-
-	if IsModelInCdimage(model) then
-		local playerPed = PlayerPedId()
-		local playerCoords, playerHeading = GetEntityCoords(playerPed), GetEntityHeading(playerPed)
-
-		RDX.Game.SpawnVehicle(model, playerCoords, playerHeading, function(vehicle)
-			TaskWarpPedIntoVehicle(playerPed, vehicle, -1)
-		end)
-	else
-		TriggerEvent('chat:addMessage', {args = {'^1SYSTEM', 'Invalid vehicle model.'}})
 	end
 end)
 
@@ -319,42 +296,57 @@ AddEventHandler('rdx:spawnHorse', function(model)
 	TriggerEvent('chat:addMessage', {args = {'^1SYSTEM', 'Invalid horse model.'}})
 end)
 
-RegisterNetEvent('rdx:createPickup')
-AddEventHandler('rdx:createPickup', function(pickupId, label, coords, type, name, components)
-	local function setObjectProperties(object)
-		SetEntityAsMissionEntity(object, true, false)
-		PlaceObjectOnGroundProperly(object)
-		FreezeEntityPosition(object, true)
-		SetEntityCollision(object, false, true)
+RegisterNetEvent('rdx:spawnVehicle')
+AddEventHandler('rdx:spawnVehicle', function(vehicle)
+	if IsModelInCdimage(vehicle) then
+		local playerPed = PlayerPedId()
+		local playerCoords, playerHeading = GetEntityCoords(playerPed), GetEntityHeading(playerPed)
 
-		pickups[pickupId] = {
-			obj = object,
-			label = label,
-			inRange = false,
-			coords = vector3(coords.x, coords.y, coords.z)
-		}
-	end
-
-	if type == 'item_weapon' then
-		local weaponHash = GetHashKey(name)
-		local pickupObject = Citizen.InvokeNative(0x9888652B8BA77F73, weaponHash, 50, coords.x, coords.y, coords.z, true, 1.0, 0)
-
-		for i = 1, #components do
-			local component = RDX.GetWeaponComponent(name, components[i])
-
-			GiveWeaponComponentToWeaponObject(pickupObject, component.hash)
-		end
-
-		setObjectProperties(pickupObject)
+		RDX.Game.SpawnVehicle(vehicle, playerCoords, playerHeading, function(vehicle)
+			TaskWarpPedIntoVehicle(playerPed, vehicle, -1)
+		end)
 	else
-		RDX.Game.SpawnLocalObject('s_mp_moneybag02x', coords, setObjectProperties)
+		TriggerEvent('chat:addMessage', { args = { '^1SYSTEM', 'Invalid vehicle model.' } })
 	end
+end)
+
+-- Removed drawing pickups here immediately and decided to add them to a table instead
+-- Also made createMissingPickups use the other pickup function instead of having the
+-- same code twice, further down we cull pickups when not needed
+
+function AddPickup(pickupId, pickupLabel, pickupCoords, pickupType, pickupName, pickupComponents)
+	pickups[pickupId] = {
+		label = pickupLabel,
+		textRange = false,
+		coords = pickupCoords,
+		type = pickupType,
+		name = pickupName,
+		components = pickupComponents,
+		object = nil,
+		deleteNow = false
+	}
+end
+
+RegisterNetEvent('rdx:createPickup')
+AddEventHandler('rdx:createPickup', function(pickupId, label, playerId, pickupType, name, components, isInfinity, pickupCoords)
+    local playerPed, entityCoords, forward, objectCoords
+    
+    if isInfinity then
+        objectCoords = pickupCoords
+    else
+        playerPed = GetPlayerPed(GetPlayerFromServerId(playerId))
+        entityCoords = GetEntityCoords(playerPed)
+        forward = GetEntityForwardVector(playerPed)
+        objectCoords = (entityCoords + forward * 1.0)
+    end
+
+    AddPickup(pickupId, label, objectCoords, pickupType, name, components)
 end)
 
 RegisterNetEvent('rdx:createMissingPickups')
 AddEventHandler('rdx:createMissingPickups', function(missingPickups)
-	for pickupId,pickup in pairs(missingPickups) do
-		TriggerEvent('rdx:createPickup', pickupId, pickup.label, pickup.coords, pickup.type, pickup.name, pickup.components)
+	for pickupId, pickup in pairs(missingPickups) do
+		AddPickup(pickupId, pickup.label, vec(pickup.coords.x, pickup.coords.y, pickup.coords.z), pickup.type, pickup.name, pickup.components, pickup.tintIndex)
 	end
 end)
 
@@ -368,30 +360,56 @@ AddEventHandler('rdx:registerSuggestions', function(registeredCommands)
 end)
 
 RegisterNetEvent('rdx:removePickup')
-AddEventHandler('rdx:removePickup', function(pickupId)
-	if pickups[pickupId] and pickups[pickupId].obj then
-		RDX.Game.DeleteObject(pickups[pickupId].obj)
-		pickups[pickupId] = nil
+AddEventHandler('rdx:removePickup', function(id)
+	local pickup = pickups[id]
+	if pickup and pickup.object then
+		RDX.Game.DeleteObject(pickup.object)
+		if pickup.type == 'item_weapon' then
+			RemoveWeaponAsset(pickup.name)
+		else
+			SetModelAsNoLongerNeeded(Config.DefaultPickupModel)
+		end
+		pickup.deleteNow = true
 	end
 end)
 
 RegisterNetEvent('rdx:deleteVehicle')
-AddEventHandler('rdx:deleteVehicle', function()
+AddEventHandler('rdx:deleteVehicle', function(radius)
 	local playerPed = PlayerPedId()
-	local vehicle, attempt = RDX.Game.GetVehicleInDirection(), 0
 
-	if IsPedInAnyVehicle(playerPed, true) then
-		vehicle = GetVehiclePedIsIn(playerPed, false)
-	end
+	if radius and tonumber(radius) then
+		radius = tonumber(radius) + 0.01
+		local vehicles = RDX.Game.GetVehiclesInArea(GetEntityCoords(playerPed), radius)
 
-	while not NetworkHasControlOfEntity(vehicle) and attempt < 100 and DoesEntityExist(vehicle) do
-		Citizen.Wait(100)
-		NetworkRequestControlOfEntity(vehicle)
-		attempt = attempt + 1
-	end
+		for k,entity in ipairs(vehicles) do
+			local attempt = 0
 
-	if DoesEntityExist(vehicle) and NetworkHasControlOfEntity(vehicle) then
-		RDX.Game.DeleteVehicle(vehicle)
+			while not NetworkHasControlOfEntity(entity) and attempt < 100 and DoesEntityExist(entity) do
+				Wait(100)
+				NetworkRequestControlOfEntity(entity)
+				attempt = attempt + 1
+			end
+
+			if DoesEntityExist(entity) and NetworkHasControlOfEntity(entity) then
+				RDX.Game.DeleteVehicle(entity)
+			end
+		end
+	else
+		local vehicle, attempt = RDX.Game.GetVehicleInDirection(), 0
+
+		if IsPedInAnyVehicle(playerPed, true) then
+			vehicle = GetVehiclePedIsIn(playerPed, false)
+		end
+
+		while not NetworkHasControlOfEntity(vehicle) and attempt < 100 and DoesEntityExist(vehicle) do
+			Wait(100)
+			NetworkRequestControlOfEntity(vehicle)
+			attempt = attempt + 1
+		end
+
+		if DoesEntityExist(vehicle) and NetworkHasControlOfEntity(vehicle) then
+			RDX.Game.DeleteVehicle(vehicle)
+		end
 	end
 end)
 
@@ -417,9 +435,9 @@ end)
 
 -- Pause menu disables HUD display
 if Config.EnableHud then
-	Citizen.CreateThread(function()
+	CreateThread(function()
 		while true do
-			Citizen.Wait(300)
+			Wait(300)
 
 			if IsPauseMenuActive() and not isPaused then
 				isPaused = true
@@ -432,104 +450,176 @@ if Config.EnableHud then
 	end)
 end
 
-function StartServerSyncLoops()
-	-- keep track of ammo
-	Citizen.CreateThread(function()
-		while true do
-			Citizen.Wait(0)
+-- Keep track of ammo usage
+CreateThread(function()
+	while true do
+		Wait(0)
 
-			if isDead then
-				Citizen.Wait(500)
-			else
-				local playerPed = PlayerPedId()
+		if isDead then
+			Wait(500)
+		else
+			local playerPed = PlayerPedId()
 
-				if IsPedShooting(playerPed) then
-					local _,weaponHash = GetCurrentPedWeapon(playerPed, true)
-					local weapon = RDX.GetWeaponFromHash(weaponHash)
+			if IsPedShooting(playerPed) then
+				local _, weaponHash = GetCurrentPedWeapon(playerPed, true)
+				local weapon = RDX.GetWeaponFromHash(weaponHash)
 
-					if weapon then
-						local ammoCount = GetAmmoInPedWeapon(playerPed, weaponHash)
-						TriggerServerEvent('rdx:updateWeaponAmmo', weapon.name, ammoCount)
-					end
+				if weapon then
+					local ammoCount = GetAmmoInPedWeapon(playerPed, weaponHash)
+					TriggerServerEvent('rdx:updateWeaponAmmo', weapon.name, ammoCount)
 				end
 			end
 		end
-	end)
+	end
+end)
 
-	-- sync current player coords with server
-	Citizen.CreateThread(function()
-		local previousCoords = vector3(RDX.PlayerData.coords.x, RDX.PlayerData.coords.y, RDX.PlayerData.coords.z)
-
+if Config.EnableInventoryKey then
+	CreateThread(function()
 		while true do
-			Citizen.Wait(1000)
-			local playerPed = PlayerPedId()
+			Wait(0)
 
-			if DoesEntityExist(playerPed) then
-				local playerCoords = GetEntityCoords(playerPed)
-				local distance = #(playerCoords - previousCoords)
-
-				if distance > 1 then
-					previousCoords = playerCoords
-					local playerHeading = RDX.Math.Round(GetEntityHeading(playerPed), 1)
-					local formattedCoords = {x = RDX.Math.Round(playerCoords.x, 1), y = RDX.Math.Round(playerCoords.y, 1), z = RDX.Math.Round(playerCoords.z, 1), heading = playerHeading}
-					TriggerServerEvent('rdx:updateCoords', formattedCoords)
+			if IsControlJustReleased(0, 0x1F6D95E5) then -- F4
+				if IsInputDisabled(0) and not isDead and not RDX.UI.Menu.IsOpen('default', 'rdx_extended', 'inventory') then
+					RDX.ShowInventory()
 				end
 			end
 		end
 	end)
 end
 
-Citizen.CreateThread(function()
-	while true do
-		Citizen.Wait(0)
-
-		if IsControlJustReleased(0, 0x1F6D95E5) then -- F1
-			if IsInputDisabled(0) and not isDead and not RDX.UI.Menu.IsOpen('default', 'redm_extended', 'inventory') then
-				RDX.ShowInventory()
-			end
-		end
-	end
-end)
+-- Disable wanted level
+if Config.DisableWantedLevel then
+	-- Previous they were creating a contstantly running loop to check if the wanted level
+	-- changed and then setting back to 0. This is all thats needed to disable a wanted level.
+	SetMaxWantedLevel(0)
+end
 
 -- Pickups
-Citizen.CreateThread(function()
+CreateThread(function()
 	while true do
-		Citizen.Wait(0)
+		Wait(0)
 		local playerPed = PlayerPedId()
 		local playerCoords, letSleep = GetEntityCoords(playerPed), true
-		local closestPlayer, closestDistance = RDX.Game.GetClosestPlayer(playerCoords)
+		-- For whatever reason there was a constant check to get the closest player here when it
+		-- wasn't even being used
+		
+		-- Major refactor here, this culls the pickups if not within range.
 
-		for pickupId,pickup in pairs(pickups) do
+		for pickupId, pickup in pairs(pickups) do
 			local distance = #(playerCoords - pickup.coords)
+			if pickup.deleteNow then
+				pickup = nil
+			else
+				if distance < 50 then
+					if not DoesEntityExist(pickup.object) then
+						letSleep = false
+						if pickup.type == 'item_weapon' then
+							local weaponHash = GetHashKey(pickup.name)
+							pickup.object = Citizen.InvokeNative(0x9888652B8BA77F73, weaponHash, 50, pickup.coords, true, 1.0, 0)
 
-			if distance < 5 then
-				local label = pickup.label
-				letSleep = false
+							for _, comp in ipairs(pickup.components) do
+								local component = RDX.GetWeaponComponent(pickup.name, comp)
+								GiveWeaponComponentToEntity(pickup.object, component.hash, weaponHash, true) -- FIX: last boolean unknown
+							end
+							
+							SetEntityAsMissionEntity(pickup.object, true, false)
+							PlaceObjectOnGroundProperly(pickup.object)
+							SetEntityRotation(pickup.object, 90.0, 0.0, 0.0, 0.0, true) -- FIX: not sure what the last two parameters should be
+							local model = GetEntityModel(pickup.object)
+							local heightAbove = GetEntityHeightAboveGround(pickup.object)
+							local currentCoords = GetEntityCoords(pickup.object)
+							local modelDimensionMin, modelDimensionMax = GetModelDimensions(model)
+							local size = (modelDimensionMax.y - modelDimensionMin.y) / 2
+							SetEntityCoords(pickup.object, currentCoords.x, currentCoords.y, (currentCoords.z - heightAbove) + size)
+						else
+							RDX.Game.SpawnLocalObject(Config.DefaultPickupModel, pickup.coords, function(obj)
+								pickup.object = obj
+							end)
 
-				if distance < 1 then
-					if IsControlJustReleased(0, 0xCEFD9220) then
-						if IsPedOnFoot(playerPed) and (closestDistance == -1 or closestDistance > 3) and not pickup.inRange then
-							pickup.inRange = true
+							while not pickup.object do
+								Wait(10)
+							end
+							
+							SetEntityAsMissionEntity(pickup.object, true, false)
+							PlaceObjectOnGroundProperly(pickup.object)
+						end
 
-							TriggerServerEvent('rdx:onPickup', pickupId)
+						FreezeEntityPosition(pickup.object, true)
+						SetEntityCollision(pickup.object, false, true)
+					end
+				else
+					if DoesEntityExist(pickup.object) then
+						DeleteObject(pickup.object)
+						if pickup.type == 'item_weapon' then
+							RemoveWeaponAsset(pickup.name)
+						else
+							SetModelAsNoLongerNeeded(Config.DefaultPickupModel)
 						end
 					end
-
-					label = ('%s~n~%s'):format(label, _U('threw_pickup_prompt'))
 				end
+				
+				if distance < 5 then
+					local label = pickup.label
+					letSleep = false
 
-				RDX.Game.Utils.DrawText3D({
-					x = pickup.coords.x,
-					y = pickup.coords.y,
-					z = pickup.coords.z + 0.25
-				}, label, 1.2, 1)
-			elseif pickup.inRange then
-				pickup.inRange = false
+					if distance < 1 then
+						if IsControlJustReleased(0, 0xCEFD9220) then
+							-- Removed the closestDistance check here, not needed
+							if IsPedOnFoot(playerPed) and not pickup.textRange then
+								pickup.textRange = true
+
+								-- FIX: unknown anim atm
+								--local dict, anim = 'weapons@first_person@aim_rng@generic@projectile@sticky_bomb@', 'plant_floor'
+								-- Lets use our new function instead of manually doing it
+								--RDX.Game.PlayAnim(dict, anim, true, 1000)
+								--Wait(1000)
+
+								TriggerServerEvent('rdx:onPickup', pickupId)
+								--PlaySoundFrontend(-1, 'PICK_UP', 'HUD_FRONTEND_DEFAULT_SOUNDSET', false)
+							end
+						end
+
+						label = ('%s~n~%s'):format(label, _U('standard_pickup_prompt'))
+					end
+					
+					local pickupCoords = GetEntityCoords(pickup.object)
+					RDX.Game.Utils.DrawText3D(vec(pickupCoords.x, pickupCoords.y, pickupCoords.z + 0.25), label, 1.2, 1)
+				elseif pickup.textRange then
+					pickup.textRange = false
+				end
 			end
 		end
 
 		if letSleep then
-			Citizen.Wait(500)
+			Wait(500)
+		end
+	end
+end)
+
+-- Update current player coords
+CreateThread(function()
+	-- wait for player to restore coords
+	while not isLoadoutLoaded do
+		Wait(1000)
+	end
+	
+	local previousCoords = vector3(RDX.PlayerData.coords.x, RDX.PlayerData.coords.y, RDX.PlayerData.coords.z)
+	local playerHeading = RDX.PlayerData.heading
+	local formattedCoords = {x = RDX.Math.Round(previousCoords.x, 1), y = RDX.Math.Round(previousCoords.y, 1), z = RDX.Math.Round(previousCoords.z, 1), heading = playerHeading}
+
+	while true do
+		-- update the players position every second instead of a configed amount otherwise
+		-- serverside won't catch up
+		Wait(1000)
+		local playerPed = PlayerPedId()
+		local playerCoords = GetEntityCoords(playerPed)
+		local distance = #(playerCoords - previousCoords)
+
+		if distance > 10 then
+			previousCoords = playerCoords
+			playerHeading = RDX.Math.Round(GetEntityHeading(playerPed), 1)
+			formattedCoords = {x = RDX.Math.Round(playerCoords.x, 1), y = RDX.Math.Round(playerCoords.y, 1), z = RDX.Math.Round(playerCoords.z, 1), heading = playerHeading}
+			TriggerServerEvent('rdx:updateCoords', formattedCoords)
 		end
 	end
 end)

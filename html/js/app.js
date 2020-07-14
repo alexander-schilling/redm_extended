@@ -1,5 +1,5 @@
 (() => {
-
+	
 	RDX = {};
 	RDX.HUDElements = [];
 

@@ -1,4 +1,4 @@
-RDX.RegisterCommand({ 'tp', 'teleport', 'setcoords' }, 'admin', function(xPlayer, args, showError)
+RDX.RegisterCommand({'tp', 'teleport', 'setcoords'}, 'admin', function(xPlayer, args, showError)
 	xPlayer.setCoords({x = args.x, y = args.y, z = args.z})
 end, false, {help = _U('command_setcoords'), validate = true, arguments = {
 	{name = 'x', help = _U('command_setcoords_x'), type = 'number'},
@@ -6,7 +6,7 @@ end, false, {help = _U('command_setcoords'), validate = true, arguments = {
 	{name = 'z', help = _U('command_setcoords_z'), type = 'number'}
 }})
 
-RDX.RegisterCommand({ 'tpw', 'teleportwaypoint', 'setwaypointcoords' }, 'admin', function(xPlayer, args, showError)
+RDX.RegisterCommand({ 'tpw', 'teleportwaypoint', 'tpwaypoint' }, 'admin', function(xPlayer, args, showError)
 	xPlayer.triggerEvent('rdx:teleportWaypoint')
 end, false, {help = _U('command_teleportwaypoint'), validate = false, arguments = {
 }})
@@ -42,12 +42,10 @@ end, false, {help = _U('command_horse'), validate = false, arguments = {
 }})
 
 RDX.RegisterCommand({'cardel', 'dv'}, 'admin', function(xPlayer, args, showError)
-	xPlayer.triggerEvent('rdx:deleteVehicle')
-end, false, {help = _U('command_cardel'), validate = false, arguments = {}})
-
-RDX.RegisterCommand({'horsedel', 'dh'}, 'admin', function(xPlayer, args, showError)
-	xPlayer.triggerEvent('rdx:deleteHorse')
-end, false, {help = _U('command_horsedel'), validate = false, arguments = {}})
+	xPlayer.triggerEvent('rdx:deleteVehicle', args.radius)
+end, false, {help = _U('command_cardel'), validate = false, arguments = {
+	{name = 'radius', help = _U('command_cardel_radius'), type = 'any'}
+}})
 
 RDX.RegisterCommand('setaccountmoney', 'admin', function(xPlayer, args, showError)
 	if args.playerId.getAccount(args.account) then
@@ -124,11 +122,9 @@ RDX.RegisterCommand({'clearall', 'clsall'}, 'admin', function(xPlayer, args, sho
 end, false, {help = _U('command_clearall')})
 
 RDX.RegisterCommand('clearinventory', 'admin', function(xPlayer, args, showError)
-	for i = 1, #args.playerId.inventory do
-		local item = args.playerId.inventory[i]
-
-		if item.count > 0 then
-			args.playerId.setInventoryItem(item.name, 0)
+	for k,v in ipairs(args.playerId.inventory) do
+		if v.count > 0 then
+			args.playerId.setInventoryItem(v.name, 0)
 		end
 	end
 end, true, {help = _U('command_clearinventory'), validate = true, arguments = {
@@ -136,12 +132,8 @@ end, true, {help = _U('command_clearinventory'), validate = true, arguments = {
 }})
 
 RDX.RegisterCommand('clearloadout', 'admin', function(xPlayer, args, showError)
-	for i = 1, #args.playerId.loadout do
-		local weapon = args.playerId.loadout[i]
-
-		if weapon then
-			args.playerId.removeWeapon(weapon.name)
-		end
+	for k,v in ipairs(args.playerId.loadout) do
+		args.playerId.removeWeapon(v.name)
 	end
 end, true, {help = _U('command_clearloadout'), validate = true, arguments = {
 	{name = 'playerId', help = _U('commandgeneric_playerid'), type = 'player'}
@@ -155,11 +147,25 @@ end, true, {help = _U('command_setgroup'), validate = true, arguments = {
 }})
 
 RDX.RegisterCommand('save', 'admin', function(xPlayer, args, showError)
-	RDX.SavePlayer(args.playerId)
+	print(('[RDX] [^2INFO^7] Manual player data save triggered for "%s"'):format(args.playerId.name))
+	RDX.SavePlayer(args.playerId, function(rowsChanged)
+		if rowsChanged ~= 0 then
+			print(('[RDX] [^2INFO^7] Saved player data for "%s"'):format(args.playerId.name))
+		else
+			print(('[RDX] [^3WARNING^7] Failed to save player data for "%s"! This may be caused by an internal error on the MySQL server.'):format(args.playerId.name))
+		end
+	end)
 end, true, {help = _U('command_save'), validate = true, arguments = {
 	{name = 'playerId', help = _U('commandgeneric_playerid'), type = 'player'}
 }})
 
 RDX.RegisterCommand('saveall', 'admin', function(xPlayer, args, showError)
-	RDX.SavePlayers()
+	print('[RDX] [^2INFO^7] Manual player data save triggered')
+	RDX.SavePlayers(function(result)
+		if result then
+			print('[RDX] [^2INFO^7] Saved all player data')
+		else
+			print('[RDX] [^3WARNING^7] Failed to save player data! This may be caused by an internal error on the MySQL server.')
+		end
+	end)
 end, true, {help = _U('command_saveall')})

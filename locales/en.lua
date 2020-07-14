@@ -35,8 +35,10 @@ Locales['en'] = {
   ['threw_weapon_ammo'] = 'you threw ~b~%s~s~ with ~o~%sx %s~s~',
   ['threw_weapon_already'] = 'you already carry the same weapon',
   ['threw_cannot_pickup'] = 'you cannot pickup that because your inventory is full!',
-  ['threw_pickup_prompt'] = 'press [E] to pickup',
   ['account_description'] = 'All kinds of %s related options.',
+  ['item_description'] = 'Weight: %s',
+
+  ['standard_pickup_prompt'] = 'press [E] to pickup',
 
   -- Key mapping
   ['keymap_showinventory'] = 'show Inventory',
@@ -48,7 +50,7 @@ Locales['en'] = {
   ['received_paycheck'] = 'received paycheck',
   ['bank'] = 'maze Bank',
   ['account_bank'] = 'bank',
-  ['account_black_money'] = 'dirty Money',
+  ['account_gold'] = 'gold',
   ['account_money'] = 'cash',
   ['act_imp'] = 'action impossible',
   ['in_vehicle'] = 'you cannot give anything to someone in a vehicle',

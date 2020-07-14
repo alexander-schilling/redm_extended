@@ -1,103 +1,37 @@
-local resourcesStopped = {}
-
-if (Config.AutoStopResources or false) then
-	async:foreach(Config.IncompatibleResourcesToStop, function(reason, resourceName)
-		local status = GetResourceState(resourceName)
-	
-		if status == 'started' or status == 'starting' then
-			while GetResourceState(resourceName) == 'starting' do
-				Citizen.Wait(100)
-			end
-	
-			ExecuteCommand(('stop %s'):format(resourceName))
-	
-			resourcesStopped[resourceName] = reason
-		end
-	end, function()
-		if RDX.Table.SizeOf(resourcesStopped) > 0 then
-			local allStoppedResources = ''
-	
-			foreach(resourcesStopped, function(reason, resourceName)
-				allStoppedResources = ('%s\n- ^3%s^7, %s'):format(allStoppedResources, resourceName, reason)
-			end)
-	
-			print(('[redm_extended] [^3WARNING^7] Stopped %s incompatible resource(s) that can cause issues when used with RDX. They are not needed and can safely be removed from your server, remove these resource(s) from your resource directory and your configuration file:%s'):format(RDX.Table.SizeOf(resourcesStopped), allStoppedResources))
-		end
-	end)
-end
-
-RegisterNetEvent('rdx:onPlayerJoined')
-AddEventHandler('rdx:onPlayerJoined', function()
-	if not RDX.Players[source] then
-		RDX.Player.LoadRDXPlayer(source)
-	end
-end)
-
-AddEventHandler('onResourceStop', function(resourceName)
-	if (resourceName ~= GetCurrentResourceName()) then
-		return
-	end
-
-	local playersSaved = false
-
-	RDX.SavePlayers(function()
-		playersSaved = true
-	end)
-
-	while not playersSaved do
-		Citizen.Wait(0)
-	end
-end)
-
 AddEventHandler('playerConnecting', function(name, setCallback, deferrals)
 	deferrals.defer()
-
-	local playerId = source
-	local identifierType = RDX.GetIdentifierType()
-	local identifier = RDX.GetPlayerIdentifier(playerId)
-
-	Citizen.Wait(100)
-
+	local playerId, identifier = source
+	Wait(100)
+	
+	for k,v in ipairs(GetPlayerIdentifiers(playerId)) do
+		if string.match(v, Config.PrimaryIdentifier) then
+			identifier = v
+			break
+		end
+	end
+	
+	if not RDX.DatabaseReady then
+		deferrals.update("The database is not initialized, please wait...")
+		while not RDX.DatabaseReady do
+			Wait(1000)
+		end
+	end
+	
 	if identifier then
 		if RDX.GetPlayerFromIdentifier(identifier) then
-			deferrals.done(('There was an error loading your character!\nError code: identifier-active\n\nThis error is caused by a player on this server who has the same identifier as you have. Make sure you are not playing on the same %s account.\n\nYour %s identifier: %s'):format(_U(identifierType), _U(identifierType), identifier))
+			deferrals.done(('There was an error loading your character!\nError code: identifier-active\n\nThis error is caused by a player on this server who has the same identifier as you have. Make sure you are not playing on the same Rockstar account.\n\nYour Rockstar identifier: %s'):format(identifier))
 		else
-			RDX.Player.CreatePlayerIfNotExists(playerId)
-
 			deferrals.done()
 		end
 	else
-		deferrals.done(('There was an error loading your character!\nError code: identifier-missing\n\n%s'):format(_U(identifierType .. '_error')))
+		deferrals.done('There was an error loading your character!\nError code: identifier-missing\n\nThe cause of this error is not known, your identifier could not be found. Please come back later or report this problem to the server administration team.')
 	end
 end)
 
-RDX.Player.CreatePlayerIfNotExists = function(playerId)
-	local identifier = RDX.GetPlayerIdentifier(playerId)
-
-	if identifier then
-		MySQL.Async.fetchScalar('SELECT COUNT(*) AS `count` FROM `users` WHERE `identifier` = @identifier', {
-			['@identifier'] = identifier
-		}, function(result)
-			if result == nil or result == 0 or (type(result) == 'table' and (result[1] == nil or result[1].count <= 0)) then
-				local accounts = {}
-
-				for account,money in pairs(Config.StartingAccountMoney) do
-					accounts[account] = money
-				end
-
-				MySQL.Async.execute('INSERT INTO users (accounts, identifier) VALUES (@accounts, @identifier)', {
-					['@accounts'] = json.encode(accounts),
-					['@identifier'] = identifier
-				}, function(rowsChanged)
-					print(('[redm_extended] [^2INFO^7] A player with name "%s^7" has been created'):format(GetPlayerName(playerId)))
-				end)
-			end
-		end)
-	end
-end
-
-RDX.Player.LoadRDXPlayer = function(playerId)
-	local identifier = RDX.GetPlayerIdentifier(playerId)
+RegisterNetEvent('rdx:characterSelected')
+AddEventHandler('rdx:characterSelected', function(characterId)
+	local playerId = source
+	local identifier, license = RDX.GetPlayerIdentifiers(playerId)
 	local userData = {
 		accounts = {},
 		inventory = {},
@@ -107,174 +41,216 @@ RDX.Player.LoadRDXPlayer = function(playerId)
 		weight = 0
 	}
 
-	if (Config.EnableDebug) then
-		userData.startTimer = GetGameTimer()
+	if not identifier then
+		DropPlayer(playerId, 'there was an error loading your character!\nError code: identifier-missing-ingame\n\nThe cause of this error is not known, your identifier could not be found. Please come back later or report this problem to the server administration team.')
+		return
+	elseif RDX.GetPlayerFromIdentifier(identifier) then
+		DropPlayer(playerId, ('there was an error loading your character!\nError code: identifier-active-ingame\n\nThis error is caused by a player on this server who has the same identifier as you have. Make sure you are not playing on the same Rockstar account.\n\nYour Rockstar identifier: %s'):format(identifier))
+		return
 	end
 
-	MySQL.Async.fetchAll('SELECT accounts, job, job_grade, `group`, loadout, position, inventory FROM users WHERE identifier = @identifier', {
-		['@identifier'] = identifier
-	}, function(result)
-		async:foreach(result, function(user)
-			local job, grade, jobObject, gradeObject = user.job, tostring(user.job_grade)
-			local foundAccounts, foundItems = {}, {}
+	local tasks = Async.CreatePool()
 
-			-- Accounts
-			if user.accounts and user.accounts ~= '' then
-				local accounts = json.decode(user.accounts)
-
-				foreach(accounts, function(money, account)
-					foundAccounts[account] = money
+	tasks.add(function(cb)
+		MySQL.Async.fetchAll('SELECT `group`, vip_level FROM users WHERE identifier = @identifier', {
+			['@identifier'] = identifier
+		}, function(result)
+			if result and result[1] then
+				userData.group = result[1].group
+				userData.vipLevel = result[1].vip_level
+				cb()
+			else
+				MySQL.Async.execute('INSERT INTO users (identifier, license) VALUES (@identifier, @license)', {
+					['@identifier'] = identifier,
+					['@license'] = license
+				}, function(rowsChanged)
+					userData.group = 'user'
+					userData.vipLevel = 0
+					cb()
 				end)
 			end
+		end)
+	end)
+	
+	tasks.add(function(cb)
+		MySQL.Async.fetchScalar('SELECT `id` FROM `characters` WHERE `identifier` = @identifier AND `character_id` = @character_id', {
+			['@identifier'] = identifier,
+			['@character_id'] = characterId
+		}, function(id)
+			if id == nil then
+				local accounts = {}
+				
+				for account,money in pairs(Config.StartingAccountMoney) do
+					accounts[account] = money
+				end
+				
+				MySQL.Async.insert('INSERT INTO `characters` (`identifier`, `character_id`, `accounts`) VALUES (@identifier, @character_id, @accounts)', {
+					['@identifier'] = identifier,
+					['@character_id'] = characterId,
+					['@accounts'] = json.encode(accounts)
+				}, function(uniqueId)
+					cb()
+				end)
+			else
+				cb()
+			end
+		end)
+	end)
 
+	tasks.startSeriesAsync(function(results)
+		-- I tried to add this as a task, but for some reason it couldn't keep up with to fetch the inserted row
+		MySQL.Async.fetchAll('SELECT id, accounts, job, job_grade, loadout, position, inventory FROM characters WHERE identifier = @identifier AND character_id = @character_id', {
+			['@identifier'] = identifier,
+			['@character_id'] = characterId
+		}, function(result)
+			userData.uniqueId = result[1].id
+			local job, grade, jobObject, gradeObject = result[1].job, tostring(result[1].job_grade)
+			local foundAccounts, foundItems = {}, {}
+			
+			-- Accounts
+			if result[1].accounts and result[1].accounts ~= '' then
+				local accounts = json.decode(result[1].accounts)
+				
+				for account,money in pairs(accounts) do
+					foundAccounts[account] = money
+				end
+			end
+			
 			table.sort(Config.Accounts, function(account1, account2)
 				return account1.priority < account2.priority
 			end)
 
-			foreach(Config.Accounts, function(account, index)
-				userData.accounts[index] = {
-					name = account.name,
-					money = foundAccounts[account.name] or Config.StartingAccountMoney[account.name] or 0,
-					label = account.label
-				}
-			end)
-
+			for account,v in pairs(Config.Accounts) do
+				table.insert(userData.accounts, {
+					name = account,
+					money = foundAccounts[account] or Config.StartingAccountMoney[account] or 0,
+					label = v.label
+				})
+			end
+			
 			-- Job
 			if RDX.DoesJobExist(job, grade) then
 				jobObject, gradeObject = RDX.Jobs[job], RDX.Jobs[job].grades[grade]
 			else
-				print(('[redm_extended] [^3WARNING^7] Ignoring invalid job for %s [job: %s, grade: %s]'):format(identifier, job, grade))
+				print(('[RDX] [^3WARNING^7] Ignoring invalid job for %s [job: %s, grade: %s]'):format(identifier, job, grade))
 				job, grade = 'unemployed', '0'
 				jobObject, gradeObject = RDX.Jobs[job], RDX.Jobs[job].grades[grade]
 			end
-
+			
 			userData.job.id = jobObject.id
 			userData.job.name = jobObject.name
 			userData.job.label = jobObject.label
-
+			
 			userData.job.grade = tonumber(grade)
 			userData.job.grade_name = gradeObject.name
 			userData.job.grade_label = gradeObject.label
 			userData.job.grade_salary = gradeObject.salary
-
+			
 			userData.job.skin_male = {}
 			userData.job.skin_female = {}
-
+			
 			if gradeObject.skin_male then userData.job.skin_male = json.decode(gradeObject.skin_male) end
 			if gradeObject.skin_female then userData.job.skin_female = json.decode(gradeObject.skin_female) end
-
+			
 			-- Inventory
-			if user.inventory and user.inventory ~= '' then
-				local inventory = json.decode(user.inventory)
-
-				foreach(inventory, function(count, name)
+			if result[1].inventory and result[1].inventory ~= '' then
+				local inventory = json.decode(result[1].inventory)
+				
+				for name,count in pairs(inventory) do
 					local item = RDX.Items[name]
-
+					
 					if item then
 						foundItems[name] = count
 					else
-						print(('[redm_extended] [^3WARNING^7] Ignoring invalid item "%s" for "%s"'):format(name, identifier))
+						print(('[RDX] [^3WARNING^7] Ignoring invalid item "%s" for "%s"'):format(name, identifier))
 					end
-				end)
+				end
 			end
-
-			foreach(RDX.Items, function(item, name)
+			
+			for name,item in pairs(RDX.Items) do
 				local count = foundItems[name] or 0
 				if count > 0 then userData.weight = userData.weight + (item.weight * count) end
-
-				table.insert(userData.inventory, {
-					name = name,
-					count = count,
-					label = item.label,
-					weight = item.weight,
-					usable = RDX.UsableItemsCallbacks[name] ~= nil,
-					rare = item.rare,
-					canRemove = item.canRemove
-				})
-			end)
-
+				
+				if(count > 0)then
+					table.insert(userData.inventory, {
+						name = name,
+						count = count,
+						label = item.label,
+						weight = item.weight,
+						usable = RDX.UsableItemsCallbacks[name] ~= nil,
+						rare = item.rare,
+						canRemove = item.canRemove
+					})
+				end
+			end
+			
 			table.sort(userData.inventory, function(a, b)
 				return a.label < b.label
 			end)
-
-			-- Group
-			if user.group then
-				userData.group = user.group
-			else
-				userData.group = 'user'
-			end
-
+			
 			-- Loadout
-			if user.loadout and user.loadout ~= '' then
-				local loadout = json.decode(user.loadout)
-
-				foreach(loadout, function(weapon, name)
+			if result[1].loadout and result[1].loadout ~= '' then
+				local loadout = json.decode(result[1].loadout)
+				
+				for name,weapon in pairs(loadout) do
 					local label = RDX.GetWeaponLabel(name)
-
+					
 					if label then
 						if not weapon.components then weapon.components = {} end
-
+						if not weapon.tintIndex then weapon.tintIndex = 0 end
+						
 						table.insert(userData.loadout, {
 							name = name,
 							ammo = weapon.ammo,
 							label = label,
-							components = weapon.components
+							components = weapon.components,
+							tintIndex = weapon.tintIndex
 						})
 					end
-				end)
-			end
-
-			-- Position
-			if user.position and user.position ~= '' then
-				userData.coords = json.decode(user.position)
-			else
-				print('[redm_extended] [^3WARNING^7] Column "position" in "users" table is missing required default value. Using backup coords, fix your database.')
-				userData.coords = {x = -269.4, y = -955.3, z = 31.2, heading = 205.8}
-			end
-		end, function()
-			RDX.Player.Initialize(playerId, identifier, userData, function(xPlayer)
-				TriggerEvent('rdx:playerLoaded', playerId, xPlayer)
-
-				xPlayer.triggerEvent('rdx:playerLoaded', {
-					playerId = xPlayer.source,
-					accounts = xPlayer.getAccounts(),
-					coords = xPlayer.getCoords(),
-					identifier = xPlayer.getIdentifier(),
-					inventory = xPlayer.getInventory(),
-					job = xPlayer.getJob(),
-					loadout = xPlayer.getLoadout(),
-					maxWeight = xPlayer.getMaxWeight(),
-					money = xPlayer.getMoney()
-				})
-
-				xPlayer.triggerEvent('rdx:createMissingPickups', RDX.Pickups)
-				xPlayer.triggerEvent('rdx:registerSuggestions', RDX.RegisteredCommands)
-
-				print(('[redm_extended] [^2INFO^7] A player with name "%s^7" has connected to the server with assigned player id %s'):format(xPlayer.getName(), playerId))
-
-				if (Config.EnableDebug) then
-					print(('[redm_extended] [DEBUG] RDX.Player.LoadRDXPlayer took %sms for creating player id %s'):format((GetGameTimer() - userData.startTimer), playerId))
 				end
-			end)
+			end
+			
+			-- Position
+			if result[1].position and result[1].position ~= '' then
+				userData.coords = json.decode(result[1].position)
+			else
+				userData.coords = Config.DefaultSpawnPosition
+			end
+			
+			-- Create Extended Player Object
+			local xPlayer = CreateExtendedPlayer(playerId, identifier, characterId, userData)
+			RDX.Players[playerId] = xPlayer
+			TriggerEvent('rdx:playerLoaded', playerId, xPlayer)
+			
+			xPlayer.triggerEvent('rdx:playerLoaded', {
+				uniqueId = xPlayer.getUniqueId(),
+				identifier = xPlayer.getIdentifier(),
+				characterId = xPlayer.getCharacterId(),
+				vipLevel = xPlayer.getVipLevel(),
+				accounts = xPlayer.getAccounts(),
+				coords = xPlayer.getCoords(),
+				inventory = xPlayer.getInventory(),
+				job = xPlayer.getJob(),
+				loadout = xPlayer.getLoadout(),
+				maxWeight = xPlayer.maxWeight,
+				money = xPlayer.getMoney()
+			})
+			
+			xPlayer.triggerEvent('rdx:createMissingPickups', RDX.Pickups)
+			xPlayer.triggerEvent('rdx:registerSuggestions', RDX.RegisteredCommands)
+
+			print(string.format('[RDX] [^2INFO^7] New player %s [%s:%s]', userData.playerName, identifier, characterId))
 		end)
 	end)
-end
-
-AddEventHandler('chatMessage', function(playerId, author, message)
-	if message:sub(1, 1) == '/' and playerId > 0 then
-		CancelEvent()
-		local commandName = message:sub(1):gmatch("%w+")()
-		TriggerClientEvent('chat:addMessage', playerId, {args = {'^1SYSTEM', _U('commanderror_invalidcommand', commandName)}})
-	end
 end)
 
 AddEventHandler('playerDropped', function(reason)
 	local playerId = source
 	local xPlayer = RDX.GetPlayerFromId(playerId)
-
+	
 	if xPlayer then
 		TriggerEvent('rdx:playerDropped', playerId, reason)
-
+		
 		RDX.SavePlayer(xPlayer, function()
 			RDX.Players[playerId] = nil
 		end)
@@ -284,7 +260,7 @@ end)
 RegisterNetEvent('rdx:updateCoords')
 AddEventHandler('rdx:updateCoords', function(coords)
 	local xPlayer = RDX.GetPlayerFromId(source)
-
+	
 	if xPlayer then
 		xPlayer.updateCoords(coords)
 	end
@@ -293,7 +269,7 @@ end)
 RegisterNetEvent('rdx:updateWeaponAmmo')
 AddEventHandler('rdx:updateWeaponAmmo', function(weaponName, ammoCount)
 	local xPlayer = RDX.GetPlayerFromId(source)
-
+	
 	if xPlayer then
 		xPlayer.updateWeaponAmmo(weaponName, ammoCount)
 	end
@@ -304,15 +280,16 @@ AddEventHandler('rdx:giveInventoryItem', function(target, type, itemName, itemCo
 	local playerId = source
 	local sourceXPlayer = RDX.GetPlayerFromId(playerId)
 	local targetXPlayer = RDX.GetPlayerFromId(target)
-
+	
 	if type == 'item_standard' then
 		local sourceItem = sourceXPlayer.getInventoryItem(itemName)
-
+		local targetItem = targetXPlayer.getInventoryItem(itemName)
+		
 		if itemCount > 0 and sourceItem.count >= itemCount then
 			if targetXPlayer.canCarryItem(itemName, itemCount) then
 				sourceXPlayer.removeInventoryItem(itemName, itemCount)
 				targetXPlayer.addInventoryItem   (itemName, itemCount)
-
+				
 				sourceXPlayer.showNotification(_U('gave_item', itemCount, sourceItem.label, targetXPlayer.name))
 				targetXPlayer.showNotification(_U('received_item', itemCount, sourceItem.label, sourceXPlayer.name))
 			else
@@ -325,24 +302,24 @@ AddEventHandler('rdx:giveInventoryItem', function(target, type, itemName, itemCo
 		if itemCount > 0 and sourceXPlayer.getAccount(itemName).money >= itemCount then
 			sourceXPlayer.removeAccountMoney(itemName, itemCount)
 			targetXPlayer.addAccountMoney   (itemName, itemCount)
-
-			sourceXPlayer.showNotification(_U('gave_account_money', RDX.Math.GroupDigits(itemCount), RDX.GetAccountLabel(itemName), targetXPlayer.name))
-			targetXPlayer.showNotification(_U('received_account_money', RDX.Math.GroupDigits(itemCount), RDX.GetAccountLabel(itemName), sourceXPlayer.name))
+			
+			sourceXPlayer.showNotification(_U('gave_account_money', RDX.Math.GroupDigits(itemCount), Config.Accounts[itemName], targetXPlayer.name))
+			targetXPlayer.showNotification(_U('received_account_money', RDX.Math.GroupDigits(itemCount), Config.Accounts[itemName], sourceXPlayer.name))
 		else
 			sourceXPlayer.showNotification(_U('imp_invalid_amount'))
 		end
 	elseif type == 'item_weapon' then
 		if sourceXPlayer.hasWeapon(itemName) then
 			local weaponLabel = RDX.GetWeaponLabel(itemName)
-
+			
 			if not targetXPlayer.hasWeapon(itemName) then
 				local _, weapon = sourceXPlayer.getWeapon(itemName)
 				local _, weaponObject = RDX.GetWeapon(itemName)
 				itemCount = weapon.ammo
-
+				
 				sourceXPlayer.removeWeapon(itemName)
 				targetXPlayer.addWeapon(itemName, itemCount)
-
+				
 				if weaponObject.ammo and itemCount > 0 then
 					local ammoLabel = weaponObject.ammo.label
 					sourceXPlayer.showNotification(_U('gave_weapon_withammo', weaponLabel, itemCount, ammoLabel, targetXPlayer.name))
@@ -359,17 +336,17 @@ AddEventHandler('rdx:giveInventoryItem', function(target, type, itemName, itemCo
 	elseif type == 'item_ammo' then
 		if sourceXPlayer.hasWeapon(itemName) then
 			local weaponNum, weapon = sourceXPlayer.getWeapon(itemName)
-
+			
 			if targetXPlayer.hasWeapon(itemName) then
 				local _, weaponObject = RDX.GetWeapon(itemName)
-
+				
 				if weaponObject.ammo then
 					local ammoLabel = weaponObject.ammo.label
-
+					
 					if weapon.ammo >= itemCount then
 						sourceXPlayer.removeWeaponAmmo(itemName, itemCount)
 						targetXPlayer.addWeaponAmmo(itemName, itemCount)
-
+						
 						sourceXPlayer.showNotification(_U('gave_weapon_ammo', itemCount, ammoLabel, weapon.label, targetXPlayer.name))
 						targetXPlayer.showNotification(_U('received_weapon_ammo', itemCount, ammoLabel, weapon.label, sourceXPlayer.name))
 					end
@@ -386,13 +363,13 @@ RegisterNetEvent('rdx:removeInventoryItem')
 AddEventHandler('rdx:removeInventoryItem', function(type, itemName, itemCount)
 	local playerId = source
 	local xPlayer = RDX.GetPlayerFromId(source)
-
+	
 	if type == 'item_standard' then
 		if itemCount == nil or itemCount < 1 then
 			xPlayer.showNotification(_U('imp_invalid_quantity'))
 		else
 			local xItem = xPlayer.getInventoryItem(itemName)
-
+			
 			if (itemCount > xItem.count or xItem.count < 1) then
 				xPlayer.showNotification(_U('imp_invalid_quantity'))
 			else
@@ -407,7 +384,7 @@ AddEventHandler('rdx:removeInventoryItem', function(type, itemName, itemCount)
 			xPlayer.showNotification(_U('imp_invalid_amount'))
 		else
 			local account = xPlayer.getAccount(itemName)
-
+			
 			if (itemCount > account.money or account.money < 1) then
 				xPlayer.showNotification(_U('imp_invalid_amount'))
 			else
@@ -419,23 +396,24 @@ AddEventHandler('rdx:removeInventoryItem', function(type, itemName, itemCount)
 		end
 	elseif type == 'item_weapon' then
 		itemName = string.upper(itemName)
-
+		
 		if xPlayer.hasWeapon(itemName) then
 			local _, weapon = xPlayer.getWeapon(itemName)
 			local _, weaponObject = RDX.GetWeapon(itemName)
-			local components, pickupLabel = RDX.Table.Clone(weapon.components)
+			local pickupLabel
+			
 			xPlayer.removeWeapon(itemName)
-
+			
 			if weaponObject.ammo and weapon.ammo > 0 then
 				local ammoLabel = weaponObject.ammo.label
-				pickupLabel = ('~y~%s~s~ [~g~%s~s~ %s]'):format(weapon.label, weapon.ammo, ammoLabel)
+				pickupLabel = ('~y~%s~s~ [~g~%s~s~]'):format(weapon.label, weapon.ammo)
 				xPlayer.showNotification(_U('threw_weapon_ammo', weapon.label, weapon.ammo, ammoLabel))
 			else
 				pickupLabel = ('~y~%s~s~'):format(weapon.label)
 				xPlayer.showNotification(_U('threw_weapon', weapon.label))
 			end
-
-			RDX.CreatePickup('item_weapon', itemName, weapon.ammo, pickupLabel, playerId, components)
+			
+			RDX.CreatePickup('item_weapon', itemName, weapon.ammo, pickupLabel, playerId, weapon.components, weapon.tintIndex)
 		end
 	end
 end)
@@ -444,7 +422,7 @@ RegisterNetEvent('rdx:useItem')
 AddEventHandler('rdx:useItem', function(itemName)
 	local xPlayer = RDX.GetPlayerFromId(source)
 	local count = xPlayer.getInventoryItem(itemName).count
-
+	
 	if count > 0 then
 		RDX.UseItem(source, itemName)
 	else
@@ -453,9 +431,9 @@ AddEventHandler('rdx:useItem', function(itemName)
 end)
 
 RegisterNetEvent('rdx:onPickup')
-AddEventHandler('rdx:onPickup', function(pickupId)
-	local pickup, xPlayer, success = RDX.Pickups[pickupId], RDX.GetPlayerFromId(source)
-
+AddEventHandler('rdx:onPickup', function(id)
+	local pickup, xPlayer, success = RDX.Pickups[id], RDX.GetPlayerFromId(source)
+	
 	if pickup then
 		if pickup.type == 'item_standard' then
 			if xPlayer.canCarryItem(pickup.name, pickup.count) then
@@ -473,23 +451,24 @@ AddEventHandler('rdx:onPickup', function(pickupId)
 			else
 				success = true
 				xPlayer.addWeapon(pickup.name, pickup.count)
-
-				for i = 1, #pickup.components do
-					xPlayer.addWeaponComponent(pickup.name, pickup.components[i])
+				xPlayer.setWeaponTint(pickup.name, pickup.tintIndex)
+				
+				for k,v in ipairs(pickup.components) do
+					xPlayer.addWeaponComponent(pickup.name, v)
 				end
 			end
 		end
-
+		
 		if success then
-			RDX.Pickups[pickupId] = nil
-			TriggerClientEvent('rdx:removePickup', -1, pickupId)
+			RDX.Pickups[id] = nil
+			TriggerClientEvent('rdx:removePickup', -1, id)
 		end
 	end
 end)
 
 RDX.RegisterServerCallback('rdx:getPlayerData', function(source, cb)
 	local xPlayer = RDX.GetPlayerFromId(source)
-
+	
 	cb({
 		identifier   = xPlayer.identifier,
 		accounts     = xPlayer.getAccounts(),
@@ -502,7 +481,7 @@ end)
 
 RDX.RegisterServerCallback('rdx:getOtherPlayerData', function(source, cb, target)
 	local xPlayer = RDX.GetPlayerFromId(target)
-
+	
 	cb({
 		identifier   = xPlayer.identifier,
 		accounts     = xPlayer.getAccounts(),
@@ -515,19 +494,43 @@ end)
 
 RDX.RegisterServerCallback('rdx:getPlayerNames', function(source, cb, players)
 	players[source] = nil
-
+	
 	for playerId,v in pairs(players) do
 		local xPlayer = RDX.GetPlayerFromId(playerId)
-
+		
 		if xPlayer then
 			players[playerId] = xPlayer.getName()
 		else
 			players[playerId] = nil
 		end
 	end
-
+	
 	cb(players)
 end)
 
-RDX.StartDBSync()
-RDX.StartPayCheck()
+-- Add support for EssentialMode >6.4.x
+AddEventHandler("es:setMoney", function(user, value) RDX.GetPlayerFromId(user).setMoney(value, true) end)
+AddEventHandler("es:addMoney", function(user, value) RDX.GetPlayerFromId(user).addMoney(value, true) end)
+AddEventHandler("es:removeMoney", function(user, value) RDX.GetPlayerFromId(user).removeMoney(value, true) end)
+AddEventHandler("es:set", function(user, key, value) RDX.GetPlayerFromId(user).set(key, value, true) end)
+
+AddEventHandler("es_db:doesUserExist", function(identifier, cb)
+	cb(true)
+end)
+
+AddEventHandler('es_db:retrieveUser', function(identifier, cb, tries)
+	tries = tries or 0
+	
+	if(tries < 500)then
+		tries = tries + 1
+		local player = RDX.GetPlayerFromIdentifier(identifier)
+		
+		if player then
+			cb({permission_level = 0, money = player.getMoney(), bank = 0, identifier = player.identifier, license = player.get("license"), group = player.group, roles = ""}, false, true)
+		else
+			Citizen.SetTimeout(100, function()
+				TriggerEvent("es_db:retrieveUser", identifier, cb, tries)
+			end)
+		end
+	end
+end)
