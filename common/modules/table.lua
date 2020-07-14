@@ -2,10 +2,6 @@ RDX.Table = {}
 
 -- nil proof alternative to #table
 function RDX.Table.SizeOf(t)
-	if (t ~= nil and #t > 0) then
-		return #t
-	end
-
 	local count = 0
 
 	for _,_ in pairs(t) do
@@ -17,11 +13,7 @@ end
 
 function RDX.Table.Set(t)
 	local set = {}
-
-	for i = 1, #t do
-		set[t[i]] = true
-	end
-
+	for k,v in ipairs(t) do set[v] = true end
 	return set
 end
 

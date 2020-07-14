@@ -21,21 +21,17 @@ end
 RDX.GetWeapon = function(weaponName)
 	weaponName = string.upper(weaponName)
 
-	for i = 1, #Config.Weapons do
-		local weapon = Config.Weapons[i]
-
-		if weapon.name == weaponName then
-			return i, weapon
+	for k,v in ipairs(Config.Weapons) do
+		if v.name == weaponName then
+			return k, v
 		end
 	end
 end
 
 RDX.GetWeaponFromHash = function(weaponHash)
-	for i = 1, #Config.Weapons do
-		local weapon = Config.Weapons[i]
-
-		if GetHashKey(weapon.name) == weaponHash then
-			return weapon
+	for k,v in ipairs(Config.Weapons) do
+		if GetHashKey(v.name) == weaponHash then
+			return v
 		end
 	end
 end
@@ -47,11 +43,9 @@ end
 RDX.GetWeaponLabel = function(weaponName)
 	weaponName = string.upper(weaponName)
 
-	for i = 1, #Config.Weapons do
-		local weapon = Config.Weapons[i]
-
-		if weapon.name == weaponName then
-			return weapon.label
+	for k,v in ipairs(Config.Weapons) do
+		if v.name == weaponName then
+			return v.label
 		end
 	end
 end
@@ -59,15 +53,11 @@ end
 RDX.GetWeaponComponent = function(weaponName, weaponComponent)
 	weaponName = string.upper(weaponName)
 
-	for i = 1, #Config.Weapons do
-		local weapon = Config.Weapons[i]
-
-		if weapon.name == weaponName then
-			for i2 = 1, #weapon.components do
-				local component = weapon.components[i2]
-
-				if component.name == weaponComponent then
-					return component
+	for k,v in ipairs(Config.Weapons) do
+		if v.name == weaponName then
+			for k2,v2 in ipairs(v.components) do
+				if v2.name == weaponComponent then
+					return v2
 				end
 			end
 		end

@@ -1,11 +1,13 @@
-fx_version 'adamant'
+fx_version 'bodacious'
 
 game 'rdr3'
 rdr3_warning 'I acknowledge that this is a prerelease build of RedM, and I am aware my resources *will* become incompatible once RedM ships.'
 
-description 'RMX (RedM Extended)'
+description 'This is a port from RedM Extended, RedEM: Roleplay, ExtendedMode (community fork of es_extended for FiveM), with some improvements (?) from each of them. This is still in development.'
 
-version '1.0.0'
+version '0.5'
+
+resource_type 'gametype' { name = 'Roleplay' }
 
 server_scripts {
 	'libs/libs.lua',
@@ -14,14 +16,14 @@ server_scripts {
 	'@mysql-async/lib/MySQL.lua',
 
 	'locale.lua',
-	'locales/en.lua',
+	'locales/*.lua',
 
 	'configs/config.lua',
 	'configs/config.weapons.lua',
 	'configs/config.horses.lua',
 
 	'server/common.lua',
-	'server/objects/player.lua',
+	'server/classes/player.lua',
 	'server/functions.lua',
 	'server/paycheck.lua',
 	'server/main.lua',
@@ -29,6 +31,7 @@ server_scripts {
 
 	'common/modules/math.lua',
 	'common/modules/table.lua',
+	'common/modules/string.lua',
 	'common/functions.lua'
 }
 
@@ -36,7 +39,7 @@ client_scripts {
 	'libs/libs.lua',
 
 	'locale.lua',
-	'locales/en.lua',
+	'locales/*.lua',
 
 	'configs/config.lua',
 	'configs/config.weapons.lua',
@@ -55,6 +58,7 @@ client_scripts {
 
 	'common/modules/math.lua',
 	'common/modules/table.lua',
+	'common/modules/string.lua',
 	'common/functions.lua'
 }
 
@@ -72,8 +76,6 @@ files {
 	'html/js/wrapper.js',
 	'html/js/app.js',
 
-	'html/fonts/pdown.ttf',
-	'html/fonts/bankgothic.ttf',
 	'html/fonts/RDR/HapnaSlabSerif-DemiBold.eot',
 	'html/fonts/RDR/HapnaSlabSerif-DemiBold.ttf',
 	'html/fonts/RDR/HapnaSlabSerif-DemiBold.woff',
@@ -96,7 +98,7 @@ files {
 	'html/fonts/RDR/Redemption.woff2',
 
 	'html/img/accounts/bank.png',
-	'html/img/accounts/black_money.png',
+	'html/img/accounts/gold.png',
 	'html/img/accounts/money.png'
 }
 

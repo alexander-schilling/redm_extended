@@ -2,27 +2,21 @@ Config = {}
 Config.Locale = 'en'
 
 Config.Accounts = {
-	{ name = 'bank', label = _U('account_bank'), priority = 0 },
-	{ name = 'black_money', label = _U('account_black_money'), priority = 1 },
-	{ name = 'money', label = _U('account_money'), priority = 2 }
+	['bank'] = { label = _U('account_bank'), priority = 0 },
+	['gold'] = { label = _U('account_gold'), priority = 1 },
+	['money'] = { label = _U('account_money'), priority = 2 }
 }
 
-Config.StartingAccountMoney = { bank = 50000 }
+Config.StartingAccountMoney = { money = 3, bank = 5 }
+Config.DefaultSpawnPosition = {x = -163.48, y = 633.58, z = 114.03, heading = 233.63}
 
 Config.EnableSocietyPayouts = false -- pay from the society account that the player is employed at? Requirement: esx_society
 Config.EnableHud            = true -- enable the default hud? Display current job and accounts (black, bank & cash)
-Config.MaxWeight            = 24   -- the max inventory weight without backpack
-Config.PaycheckInterval     = 7 * 60000 -- how often to recieve pay checks in milliseconds
+Config.EnableInventoryKey 	= false
+Config.MaxWeight            = 124   -- the max inventory weight without backpack
+Config.PaycheckInterval     = 30 * 60000 -- how often to recieve pay checks in milliseconds
 Config.EnableDebug          = false
-Config.AutoStopResources	= false -- `true` is recommended because those resources are incompatible with RDX framework, `false` is default for visibility in server list
-Config.DefaultIdentifier	= 'license' -- Options: `steam`, `license`, `fivem`, `discord`, `xbl`, `live` and `ip`, default `license`
+Config.PrimaryIdentifier	= 'steam' -- Options: `steam`, `license`, `fivem`, `discord`, `xbl`, `live` and `ip`, default `license`
 
-Config.IncompatibleResourcesToStop = {
-	['spawnmanager'] = 'Default resource that takes care of spawning players, RDX does this already',
-	['mapmanager'] = 'Default resource that was required by spawnmanager, but neither are used',
-	['basic-gamemode'] = 'Resource that is solely for choosing the default game type',
-	['fivem'] = 'Resource that is solely for choosing the default game type',
-	['fivem-map-hipster'] = 'Default spawn locations for mapmanager',
-	['fivem-map-skater'] = 'Default spawn locations for mapmanager',
-	['baseevents'] = 'Default resource for handling death events, RDX does this already'
-}
+Config.DefaultPlayerModel = `mp_male`
+Config.DefaultPickupModel = `s_mp_moneybag02x`
