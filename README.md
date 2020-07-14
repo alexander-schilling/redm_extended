@@ -20,6 +20,7 @@ Some functions and natives implementations are from that project, all credits go
 - [RDX Menu Dialog](https://github.com/alexander-schilling/rdx_menu_dialog)
 - [Async RedM](https://github.com/TigoDevelopment/redm-async/tree/master)
 - [MySQL Async](https://github.com/brouznouf/fivem-mysql-async)
+- [RDX Identity](https://github.com/alexander-schilling/rdx_identity)
 - [RDX Framework Discord](https://discord.gg/HScTyEt)
 
 ## Features
@@ -30,6 +31,28 @@ Some functions and natives implementations are from that project, all credits go
 - Job system with grades
 - Easy to use API for developers to easily integrate RDX to their projects
 - Register your own commands easily, with argument validation, chat suggestion and using FXServer ACL
+
+## Setup
+```
+set mysql_connection_string "mysql://user:password@location/database"
+
+add_ace resource.redm_extended command.add_ace allow
+add_ace resource.redm_extended command.add_principal allow
+add_ace resource.redm_extended command.remove_principal allow
+
+ensure spawnmanager
+ensure mapmanager
+ensure sessionmanager-rdr3
+ensure chat
+ensure yarn
+
+ensure async
+ensure mysql-async
+ensure redm_extended
+ensure rdx_menu_default
+ensure rdx_menu_dialog
+ensure rdx_identity
+```
 
 ## Screenshots
 ![RedM-Extended](https://i.imgur.com/Ijczndn.jpg)
